@@ -62,6 +62,7 @@ class TrajectoryCollector:
 
         raw_prompt = gen_batch.non_tensor_batch['raw_prompt'][item]
         data_source = gen_batch.non_tensor_batch['data_source'][item]
+        apply_chat_template_kwargs = self.config.data.get("apply_chat_template_kwargs", {})
         
         # Get observation components
         obs_texts = obs.get('text', None)
@@ -96,7 +97,8 @@ class TrajectoryCollector:
         prompt_with_chat_template = self.tokenizer.apply_chat_template(
             chat,
             add_generation_prompt=True,
-            tokenize=False
+            tokenize=False,
+            **apply_chat_template_kwargs
         )
         
         # Initialize return dict
