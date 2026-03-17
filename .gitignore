@@ -103,9 +103,6 @@ ENV/
 # Rope project settings
 .ropeproject
 
-# vscode
-.vscode
-
 # Mac
 .DS_Store
 
@@ -132,3 +129,13 @@ data/
 .tmp
 *ports
 
+# FireBench
+# sandbox run directories (Docker workspace copies, can be large)
+agent_system/environments/env_package/fire_bench/runs/
+# trajectory logs generated during training
+traj_logs/
+# planning / scratch files
+fire_bench_env_plan.md
+
+.claude
+.github

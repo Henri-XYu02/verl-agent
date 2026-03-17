@@ -284,9 +284,10 @@ class TrajectoryCollector:
 
     def vanilla_multi_turn_loop(
             self,
-            gen_batch: DataProto, 
-            actor_rollout_wg, 
+            gen_batch: DataProto,
+            actor_rollout_wg,
             envs: EnvironmentManagerBase,
+            global_step: int = 0,
             ) -> DataProto:
         """
         Collects trajectories through parallel agent-environment agent_loop.
@@ -407,17 +408,25 @@ class TrajectoryCollector:
         success: Dict[str, np.ndarray] = envs.success_evaluator(
                     total_infos=total_infos,
                     total_batch_list=total_batch_list,
-                    episode_rewards=episode_rewards, 
+                    episode_rewards=episode_rewards,
                     episode_lengths=episode_lengths,
                     )
-        
+
+        # Log full trajectories for FireBench (task + all actions/observations)
+        if hasattr(envs, 'log_trajectories'):
+            log_dir = self.config.get("traj_log_dir", None) or \
+                      self.config.trainer.get("traj_log_dir", None) or \
+                      f"{self.config.trainer.default_local_dir}/traj_logs/{self.config.trainer.experiment_name}"
+            envs.log_trajectories(log_dir=log_dir, global_step=global_step)
+
         return total_batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings
     
     def dynamic_multi_turn_loop(
             self,
-            gen_batch: DataProto, 
-            actor_rollout_wg, 
+            gen_batch: DataProto,
+            actor_rollout_wg,
             envs: EnvironmentManagerBase,
+            global_step: int = 0,
             ) -> DataProto:
         """
         Conduct dynamic rollouts until a target batch size is met. 
@@ -455,6 +464,7 @@ class TrajectoryCollector:
                 gen_batch=gen_batch,
                 actor_rollout_wg=actor_rollout_wg,
                 envs=envs,
+                global_step=global_step,
             )
             batch_list, episode_rewards, episode_lengths, success, traj_uid, tool_callings = filter_group_data(batch_list=batch_list, 
                                                                                                 episode_rewards=episode_rewards, 
@@ -483,10 +493,11 @@ class TrajectoryCollector:
 
     def multi_turn_loop(
             self,
-            gen_batch: DataProto, 
-            actor_rollout_wg, 
+            gen_batch: DataProto,
+            actor_rollout_wg,
             envs: EnvironmentManagerBase,
             is_train: bool = True,
+            global_step: int = 0,
             ) -> DataProto:
         """
         Select and run the appropriate rollout loop (dynamic or vanilla).
@@ -511,14 +522,16 @@ class TrajectoryCollector:
                 gen_batch=gen_batch,
                 actor_rollout_wg=actor_rollout_wg,
                 envs=envs,
+                global_step=global_step,
             )
         else:
-            # Vanilla Sampling   
+            # Vanilla Sampling
             total_batch_list, total_episode_rewards, total_episode_lengths, total_success, total_traj_uid, totoal_tool_callings = \
                 self.vanilla_multi_turn_loop(
                 gen_batch=gen_batch,
                 actor_rollout_wg=actor_rollout_wg,
                 envs=envs,
+                global_step=global_step,
             )
         assert len(total_batch_list) == len(total_episode_rewards)
         assert len(total_batch_list) == len(total_episode_lengths)

@@ -47,12 +47,16 @@ def run_ppo(config) -> None:
         print(f"ray init kwargs: {ray_init_kwargs}")
         ray.init(**OmegaConf.to_container(ray_init_kwargs))
 
-    runner = TaskRunner.remote()
-    ray.get(runner.run.remote(config))
+    # RAY_LOCAL_MODE=1: run TaskRunner directly in the main process so VSCode
+    # debugger breakpoints work (Ray remote actors run in separate processes).
+    if os.environ.get("RAY_LOCAL_MODE") == "1":
+        _TaskRunnerBase().run(config)
+    else:
+        runner = TaskRunner.remote()
+        ray.get(runner.run.remote(config))
 
 
-@ray.remote(num_cpus=1)  # please make sure main_task is not scheduled on head
-class TaskRunner:
+class _TaskRunnerBase:
     def run(self, config):
         # print initial config
         from pprint import pprint
@@ -186,6 +190,11 @@ class TaskRunner:
         )
         trainer.init_workers()
         trainer.fit()
+
+
+@ray.remote(num_cpus=1)  # please make sure main_task is not scheduled on head
+class TaskRunner(_TaskRunnerBase):
+    pass
 
 
 def create_rl_dataset(data_paths, data_config, tokenizer, processor):

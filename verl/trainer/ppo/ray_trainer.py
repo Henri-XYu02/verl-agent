@@ -751,6 +751,7 @@ class RayPPOTrainer:
                                                     actor_rollout_wg=self.actor_rollout_wg,
                                                     envs=self.val_envs,
                                                     is_train=False,
+                                                    global_step=self.global_steps,
                                                     )
             print('validation generation end')
             del test_batch
@@ -1084,6 +1085,7 @@ class RayPPOTrainer:
                                                                 actor_rollout_wg=self.actor_rollout_wg,
                                                                 envs=self.envs,
                                                                 is_train=True,
+                                                                global_step=self.global_steps,
                                                                 )
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer("gen_max", timing_raw):

@@ -108,7 +108,7 @@ class vLLMRollout(BaseRollout):
 
         tensor_parallel_size = self.config.get("tensor_model_parallel_size", 1)
         assert tensor_parallel_size <= torch.distributed.get_world_size(), "tensor parallel size should be less than or equal to the world size"
-        max_num_batched_tokens = self.config.get("max_num_batched_tokens", 8192)
+        max_num_batched_tokens = self.config.get("max_num_batched_tokens", None)
 
         if kwargs.get("train_tp") is not None:
             # deployed with megatron
@@ -141,6 +141,9 @@ class vLLMRollout(BaseRollout):
             assert max_position_embeddings >= config.prompt_length + config.response_length, "model context length should be greater than total sequence length"
 
         max_model_len = int(config.max_model_len or config.prompt_length + config.response_length)
+
+        if max_num_batched_tokens is None:
+            max_num_batched_tokens = max_model_len
 
         if max_num_batched_tokens < max_model_len and self.config.enable_chunked_prefill:
             raise ValueError(

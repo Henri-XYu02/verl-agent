@@ -599,6 +599,111 @@ class AppWorldEnvironmentManager(EnvironmentManagerBase):
                 postprocess_text_obs.append(obs)
         return postprocess_text_obs
 
+class FireBenchEnvironmentManager(EnvironmentManagerBase):
+    """
+    EnvironmentManager for the FIRE-Bench paper reproduction environment.
+    """
+    def __init__(self, envs, projection_f, config):
+        self.memory = SimpleMemory()
+        self._traj_log_step = 0
+        super().__init__(envs, projection_f, config)
+
+    def log_trajectories(self, log_dir: str, global_step: int = 0):
+        """Write one text file per trajectory containing the full prompt:
+        initial instruction + all (raw LLM action, observation) pairs from memory."""
+        import os, time
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        for i in range(len(self.tasks)):
+            task_id = self.task_ids[i] if hasattr(self, 'task_ids') else f"env{i:03d}"
+            lines = []
+            lines.append("=" * 80)
+            lines.append(f"TASK: {task_id}  |  global_step={global_step}  |  total_steps={len(self.memory[i])}")
+            lines.append("=" * 80)
+            lines.append(self.tasks[i])
+            lines.append("")
+            for step_idx, record in enumerate(self.memory[i]):
+                lines.append(f"{'─' * 40} Action {step_idx + 1} {'─' * 40}")
+                lines.append(record.get("raw_action", record.get("action", "")))
+                lines.append(f"{'─' * 40} Observation {step_idx + 1} {'─' * 40}")
+                lines.append(record.get("text_obs", ""))
+                lines.append("")
+            fname = f"step{global_step:05d}_{timestamp}_{task_id}_steps{len(self.memory[i])}.txt"
+            with open(os.path.join(log_dir, fname), "w") as f:
+                f.write("\n".join(lines))
+        self._traj_log_step += 1
+
+    def reset(self, kwargs):
+        text_obs, infos = self.envs.reset()
+
+        self.memory.reset(batch_size=len(text_obs))
+        self.tasks = text_obs.copy()
+        self.task_ids = [info.get("task_id", f"env{i:03d}") for i, info in enumerate(infos)]
+        self.pre_text_obs = text_obs
+
+        full_text_obs = self.build_text_obs(text_obs, init=True)
+        return {'text': full_text_obs, 'image': None, 'anchor': text_obs}, infos
+
+    def step(self, text_actions: List[str]):
+        actions, valids = self.projection_f(text_actions)
+
+        text_obs, rewards, dones, infos = self.envs.step(actions)
+
+        self.memory.store({
+            'text_obs': text_obs,
+            'action': [a.get('content', '') for a in actions],
+            'raw_action': list(text_actions),
+        })
+        self.pre_text_obs = text_obs
+
+        full_text_obs = self.build_text_obs(text_obs)
+
+        for i, info in enumerate(infos):
+            info['is_action_valid'] = to_numpy(valids[i])
+
+        next_observations = {'text': full_text_obs, 'image': None, 'anchor': text_obs}
+        rewards = to_numpy(rewards)
+        dones = to_numpy(dones)
+
+        return next_observations, rewards, dones, infos
+
+    def build_text_obs(self, text_obs: List[str], init: bool = False) -> List[str]:
+        postprocess_text_obs = []
+        if init:
+            for i in range(len(text_obs)):
+                obs = FIRE_BENCH_TEMPLATE_NO_HIS.format(
+                    system_prompt=FIRE_BENCH_SYSTEM_PROMPT,
+                    task_description=self.tasks[i],
+                )
+                postprocess_text_obs.append(obs)
+        else:
+            for i in range(len(text_obs)):
+                recent_history = self.memory[i][-self.config.env.history_length:]
+                valid_history_length = len(recent_history)
+                start_index = len(self.memory[i]) - valid_history_length
+                action_history = ""
+                for j, record in enumerate(recent_history):
+                    step_number = start_index + j + 1
+                    action = record["action"]
+                    env_obs = record["text_obs"]
+                    action_history += f"\nAction {step_number}:\n{action}\n\nObservation {step_number}:\n{env_obs}\n"
+
+                if len(action_history) > 10000:
+                    action_history = "... " + action_history[-10000:]
+
+                obs = FIRE_BENCH_TEMPLATE.format(
+                    system_prompt=FIRE_BENCH_SYSTEM_PROMPT,
+                    task_description=self.tasks[i],
+                    step_count=len(self.memory[i]),
+                    history_length=valid_history_length,
+                    action_history=action_history.strip(),
+                    current_step=len(self.memory[i]) + 1,
+                    current_observation=text_obs[i],
+                )
+                postprocess_text_obs.append(obs)
+        return postprocess_text_obs
+
+
 def make_envs(config):
     """
     Create enviroments 
@@ -689,10 +794,34 @@ def make_envs(config):
         from agent_system.environments.env_package.appworld import build_appworld_envs, appworld_projection
         _envs = build_appworld_envs(dataset_name='train', seed=config.env.seed, env_num=config.data.train_batch_size, group_n=group_n, start_server_id=0, resources_per_worker=resources_per_worker)
         _val_envs = build_appworld_envs(dataset_name='test_normal', seed=config.env.seed + 1000, env_num=config.data.val_batch_size, group_n=1, start_server_id=config.data.train_batch_size*group_n, resources_per_worker=resources_per_worker)
-        
+
         projection_f = partial(appworld_projection)
         envs = AppWorldEnvironmentManager(_envs, projection_f, config)
         val_envs = AppWorldEnvironmentManager(_val_envs, projection_f, config)
+        return envs, val_envs
+    elif "fire_bench" in config.env.env_name.lower():
+        from agent_system.environments.env_package.fire_bench import build_fire_bench_envs, fire_bench_projection
+        task_ids = getattr(config.env, 'task_ids', None)
+        if task_ids is not None:
+            task_ids = list(task_ids)
+        image = getattr(config.env, 'fire_bench_image', None)
+        fb_kwargs = dict(
+            task_ids=task_ids,
+            max_steps=config.env.max_steps,
+            env_num=config.data.train_batch_size,
+            group_n=group_n,
+            resources_per_worker=resources_per_worker,
+        )
+        if image is not None:
+            fb_kwargs['image'] = image
+        _envs = build_fire_bench_envs(**fb_kwargs)
+        fb_kwargs['env_num'] = config.data.val_batch_size
+        fb_kwargs['group_n'] = 1
+        _val_envs = build_fire_bench_envs(**fb_kwargs)
+
+        projection_f = partial(fire_bench_projection)
+        envs = FireBenchEnvironmentManager(_envs, projection_f, config)
+        val_envs = FireBenchEnvironmentManager(_val_envs, projection_f, config)
         return envs, val_envs
     else:
         print("Environment not supported")
