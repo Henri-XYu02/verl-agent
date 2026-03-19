@@ -2,6 +2,17 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "FireBench smoke test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/smoke_test_fire_bench.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "FIRE_BENCH_IMAGE": "fire-bench-sandbox:latest"
+            }
+        },
+        {
             "name": "FireBench trainer (debug) - Qwen3-Coder-30B-A3B",
             "type": "debugpy",
             "request": "launch",
@@ -9,7 +20,7 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1,3,6",
+                "CUDA_VISIBLE_DEVICES": "0,1,2,5,6",
                 "VLLM_ATTENTION_BACKEND": "XFORMERS",
                 "RAY_LOCAL_MODE": "1",
                 "HF_HOME": "/data/shared/huggingface",
@@ -76,7 +87,7 @@
             "console": "integratedTerminal",
             "cwd": "${workspaceFolder}",
             "env": {
-                "CUDA_VISIBLE_DEVICES": "1,3,6",
+                "CUDA_VISIBLE_DEVICES": "0,1,2",
                 "VLLM_ATTENTION_BACKEND": "XFORMERS",
                 "RAY_LOCAL_MODE": "1",
                 "TRANSFORMERS_CACHE": "/data/xinle/hf_cache/transformers",
@@ -85,8 +96,8 @@
             },
             "args": [
                 "algorithm.adv_estimator=gigpo",
-                "data.train_files=/home/xinle/data/fire_bench/train.parquet",
-                "data.val_files=/home/xinle/data/fire_bench/val.parquet",
+                "data.train_files=/data/xinle/fire_bench_dataset/train.parquet",
+                "data.val_files=/data/xinle/fire_bench_dataset/val.parquet",
                 "data.train_batch_size=3",
                 "data.val_batch_size=5",
                 "data.return_raw_chat=True",

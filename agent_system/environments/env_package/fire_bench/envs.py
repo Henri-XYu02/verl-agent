@@ -3,10 +3,42 @@ import re
 import numpy as np
 import ray
 from pathlib import Path
+import json
+import sys
 
 from .sandbox import DockerSandbox, FIRE_BENCH_ROOT, SANDBOX_IMAGE
 
 INSTRUCTION_TYPE = os.environ.get("FIRE_BENCH_INSTRUCTION_TYPE", "user")  # "gt" or "user"
+
+from dotenv import load_dotenv
+load_dotenv()  # Loads .env file
+
+# ---------------------------------------------------------------------------
+# RAGChecker imports — optional; falls back to binary reward if unavailable
+# ---------------------------------------------------------------------------
+try:
+    sys.path.insert(0, str(Path(FIRE_BENCH_ROOT).parent / "FIRE-Bench" / "eval" / "RAGChecker"))
+    from ragchecker import RAGResults, RAGChecker
+    from ragchecker.metrics import overall_metrics
+    _RAGCHECKER_AVAILABLE = True
+except Exception:
+    _RAGCHECKER_AVAILABLE = False
+
+# Ground-truth answers keyed by task_id, loaded lazily from FIRE-Bench utils.py
+_GT_CACHE: dict[str, str] | None = None
+_QUERY_CACHE: dict[str, str] | None = None
+
+
+def _load_gt_and_query() -> tuple[dict, dict]:
+    global _GT_CACHE, _QUERY_CACHE
+    if _GT_CACHE is not None:
+        return _GT_CACHE, _QUERY_CACHE
+    utils_path = Path(FIRE_BENCH_ROOT).parent / "FIRE-Bench" / "eval" / "RAGChecker" / "utils.py"
+    namespace: dict = {}
+    exec(utils_path.read_text(), namespace)
+    _GT_CACHE = namespace.get("gt", {})
+    _QUERY_CACHE = namespace.get("query", {})
+    return _GT_CACHE, _QUERY_CACHE
 
 
 class FireBenchWorker:
@@ -84,7 +116,7 @@ class FireBenchWorker:
                 f"Task finished. Conclusion submitted ({len(conclusion)} chars).",
                 reward,
                 True,
-                {"won": reward > 5.0, "conclusion": conclusion, "task_id": self.task_id},
+                {"won": reward > 0.5, "conclusion": conclusion, "task_id": self.task_id},
             )
 
         # Execute action in sandbox
@@ -147,10 +179,50 @@ class FireBenchWorker:
 
     def _compute_reward(self, conclusion: str) -> float:
         """
-        Phase 1 placeholder: 1.0 if the agent produced a non-empty conclusion, 0.0 otherwise.
-        Phase 2: integrate RAGChecker F1 evaluation here.
+        Compute reward using RAGChecker overall F1 score (0–100 scale → 0.0–1.0).
+
+        The agent's conclusion is compared against the ground-truth answer for
+        the current task using RAGChecker precision + recall → F1.  If RAGChecker
+        is unavailable or evaluation fails, falls back to 1.0 / 0.0 binary reward.
         """
-        return 1.0 if conclusion.strip() else 0.0
+        if not conclusion.strip():
+            return 0.0
+
+        if not _RAGCHECKER_AVAILABLE or not self.task_id:
+            return 1.0
+
+        try:
+            gt_map, query_map = _load_gt_and_query()
+            gt_answer = gt_map.get(self.task_id, "")
+            query = query_map.get(self.task_id, self.task_id)
+            if not gt_answer:
+                return 1.0  # no ground truth available — binary fallback
+
+            rag_input = {
+                "results": [
+                    {
+                        "query_id": "000",
+                        "query": query,
+                        "gt_answer": gt_answer,
+                        "response": conclusion,
+                        "retrieved_context": [],
+                    }
+                ]
+            }
+            evaluator = RAGChecker(
+                extractor_name="openai/gpt-4o-mini",
+                checker_name="openai/gpt-4o-mini",
+                batch_size_extractor=8,
+                batch_size_checker=8,
+            )
+            rag_results = RAGResults.from_json(json.dumps(rag_input))
+            metrics = evaluator.evaluate(rag_results, overall_metrics)
+            f1 = metrics.get(overall_metrics, {}).get("f1", 0.0)
+            # RAGChecker reports scores on a 0–100 scale; normalize to 0–10
+            return float(f1) / 100.0
+        except Exception as e:
+            # Evaluation error — fall back to binary reward
+            return 1.0 if conclusion.strip() else 0.0
 
     def close(self):
         if self.sandbox is not None:

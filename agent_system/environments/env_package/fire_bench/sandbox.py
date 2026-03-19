@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()  # Loads .env file
 
-FIRE_BENCH_ROOT = os.environ.get("FIRE_BENCH_ROOT", "/home/xinle/FIRE-Bench")
+FIRE_BENCH_ROOT = os.environ.get("FIRE_BENCH_ROOT", "/data/xinle/FIRE-Bench")
 SANDBOX_IMAGE = os.environ.get("FIRE_BENCH_IMAGE", "fire-bench-sandbox:latest")
 MAX_OUTPUT_LEN = 8000  # chars — truncate long stdout to avoid context explosion
 
